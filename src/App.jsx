@@ -4,10 +4,9 @@ import { FirebaseProvider } from './firebaseContext'
 import Homescreen from './components/Homescreen'
 import Navbar from './components/Navbar'
 import LoadingScreen from './components/LoadingScreen'
+import { GAMES } from './config/gamesRegistry'
 
-const ImposterGame = React.lazy(() => import('./games/ImposterGame'))
 const AdminPanel = React.lazy(() => import('./pages/AdminPanel'))
-const Bingo = React.lazy(() => import('./games/Bingo'))
 
 export default function App() {
   return (
@@ -17,13 +16,17 @@ export default function App() {
         <main className="app-main container">
           <Suspense fallback={<LoadingScreen />}>
             <Routes>
-              <Route path='/' element={<Homescreen />} />
-              <Route path='/imposter' element={<ImposterGame />} />
-              <Route path='/imposter/:roomId' element={<ImposterGame />} />
-              <Route path='/bingo' element={<Bingo />} />
-              <Route path='/bingo/:roomId' element={<Bingo />} />
-              <Route path='/admin' element={<AdminPanel />} />
-              {/* /bingo and /quiz routes will be added later */}
+              <Route path="/" element={<Homescreen />} />
+              {GAMES.map((game) => {
+                const GameComponent = game.component
+                return (
+                  <React.Fragment key={game.gameId}>
+                    <Route path={game.path} element={<GameComponent />} />
+                    <Route path={`${game.path}/:roomId`} element={<GameComponent />} />
+                  </React.Fragment>
+                )
+              })}
+              <Route path="/admin" element={<AdminPanel />} />
             </Routes>
           </Suspense>
         </main>

@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup": "npm install && npx firebase --version"
   },
   "dependencies": {
     "firebase": "^12.8.0",
@@ -13,6 +14,7 @@
     "react-router-dom": "^6.14.1"
   },
   "devDependencies": {
+    "firebase-tools": "^13.0.0",
     "vite": "^5.0.0"
   }
 }

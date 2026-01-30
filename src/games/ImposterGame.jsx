@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useFirebase } from '../firebaseContext'
-import { collection, query, doc, setDoc, updateDoc, arrayUnion, onSnapshot, runTransaction } from 'firebase/firestore'
+import { collection, query, doc, setDoc, onSnapshot, runTransaction } from 'firebase/firestore'
+import { useGameRoom } from '../hooks/useGameRoom'
 import LoadingScreen from '../components/LoadingScreen'
 import LobbyView from '../components/LobbyView'
-import { useParams, useNavigate } from 'react-router-dom'
 
 // Demo word pairs: [crew, imposter]
 const WORD_PAIRS = [
@@ -19,20 +19,26 @@ const WORD_PAIRS = [
   ['Fluss', 'See'],
 ]
 
+const IMPOSTER_COLLECTION = 'imposterRooms'
+
 export default function ImposterGame(){
-  const { db, uid, username } = useFirebase()
-  const userId = uid
-  const navigate = useNavigate()
-  // Immer nur ein Raum mit fixer ID 'main' in imposterRooms
-  const [roomId] = useState('main')
-  const [room, setRoom] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [joining, setJoining] = useState(false)
+  const { db } = useFirebase()
+  const {
+    roomId,
+    room,
+    loading,
+    joining,
+    joinRoom,
+    userId,
+    username,
+  } = useGameRoom(IMPOSTER_COLLECTION, '/imposter')
+  const [manualRoomId, setManualRoomId] = useState('')
   const [wordSets, setWordSets] = useState([])
   const [selectedSet, setSelectedSet] = useState('')
 
   // load word sets (for host selection)
   useEffect(() => {
+    if (!db) return
     const q = query(collection(db, 'wordSets'))
     return onSnapshot(q, (qsnap) => {
       const arr = []
@@ -42,53 +48,10 @@ export default function ImposterGame(){
     }, (err) => console.error('wordSets onSnapshot', err))
   }, [db, selectedSet])
 
-  // subscribe to a specific room when roomId is set
-  useEffect(() => {
-    if (!roomId) return
-    setLoading(true)
-  const ref = doc(db, 'imposterRooms', roomId)
-    const unsub = onSnapshot(ref, (snap) => {
-      setRoom(snap.exists() ? { id: snap.id, ...snap.data() } : null)
-      setLoading(false)
-    }, (err) => {
-      console.error('room onSnapshot', err)
-      setLoading(false)
-    })
-    return unsub
-  }, [db, roomId])
-
-  // joinRoom: immer auf 'main', legt Raum an falls nicht vorhanden
-  const joinRoom = useCallback(async () => {
-    if (!db || !userId) return
-    setJoining(true)
-    try {
-  const ref = doc(db, 'imposterRooms', 'main')
-      await runTransaction(db, async (tx) => {
-        const r = await tx.get(ref)
-        if (!r.exists()) {
-          // create minimal room if missing
-          tx.set(ref, { players: [{ id: userId, name: username ?? userId }], status: 'waiting', createdAt: Date.now(), host: userId })
-          return
-        }
-        const data = r.data() || {}
-        const players = Array.isArray(data.players) ? [...data.players] : []
-        if (!players.find(p => p.id === userId)) players.push({ id: userId, name: username ?? userId })
-        const updates = { players, status: data.status ?? 'waiting' }
-        if (!data.host) updates.host = userId
-        tx.update(ref, updates)
-      })
-      // navigate(`/imposter/main`) ist nicht nötig, da wir schon auf main sind
-    } catch (e) {
-      console.error('joinRoom error', e)
-    } finally {
-      setJoining(false)
-    }
-  }, [db, userId, username])
-
   // start game (host only)
   const startRound = useCallback(async () => {
     if (!db || !roomId) return
-  const ref = doc(db, 'imposterRooms', roomId)
+  const ref = doc(db, IMPOSTER_COLLECTION, roomId)
     try {
       await runTransaction(db, async (tx) => {
         const r = await tx.get(ref)
@@ -162,28 +125,28 @@ export default function ImposterGame(){
   // submit clue
   const submitClue = async (clue) => {
     if (!db || !roomId || !clue) return
-  const ref = doc(db, 'imposterRooms', roomId)
+  const ref = doc(db, IMPOSTER_COLLECTION, roomId)
     await setDoc(ref, { cluesGiven: { ...room.cluesGiven, [userId]: clue } }, { merge: true })
   }
 
   // submit vote
   const submitVote = async (targetId) => {
     if (!db || !roomId || !targetId) return
-  const ref = doc(db, 'imposterRooms', roomId)
+  const ref = doc(db, IMPOSTER_COLLECTION, roomId)
     await setDoc(ref, { votes: { ...room.votes, [userId]: targetId } }, { merge: true })
   }
 
   // imposter guess
   const submitImposterGuess = async (guess) => {
     if (!db || !roomId || !guess) return
-  const ref = doc(db, 'imposterRooms', roomId)
+  const ref = doc(db, IMPOSTER_COLLECTION, roomId)
     await setDoc(ref, { imposterGuess: { guess, by: userId } }, { merge: true })
   }
 
   // next phase (host only)
   const nextPhase = async () => {
     if (!db || !roomId || room?.host !== userId) return
-  const ref = doc(db, 'imposterRooms', roomId)
+  const ref = doc(db, IMPOSTER_COLLECTION, roomId)
     // phase transitions: clue -> vote -> reveal -> clue or end
     if (phase === 'clue') {
       // all clues given?
@@ -240,15 +203,16 @@ export default function ImposterGame(){
     if (room?.imposterGuess && !room?.winner && isImposter && room.imposterGuess.guess) {
       if (room.imposterGuess.guess.trim().toLowerCase() === (room.word||'').trim().toLowerCase()) {
         // imposter wins
-        setDoc(doc(db, 'rooms', roomId), { winner: 'imposter', phase: 'end' }, { merge: true })
+        setDoc(doc(db, IMPOSTER_COLLECTION, roomId), { winner: 'imposter', phase: 'end' }, { merge: true })
       }
     }
   }, [room?.imposterGuess, room?.winner, isImposter, room?.word, db, roomId])
 
   if (!userId) return <LoadingScreen />
 
-  // If there is no roomId param, show Smart Join / Create options
-  if (!paramRoomId) {
+  // If there is no roomId param, show Join (main) / Create options
+  const joinMain = () => joinRoom('main')
+  if (!roomId) {
     return (
       <div className="container">
         <header style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -259,15 +223,15 @@ export default function ImposterGame(){
         <section className="card" style={{marginTop:16}}>
           <p>Finde ein offenes Spiel oder erstelle ein neues.</p>
           <div style={{display:'flex',gap:12}}>
-            <button className="btn-orange" onClick={searchAndJoin} disabled={loading}>{loading ? 'Suche...' : 'Spiel suchen & beitreten'}</button>
-            <button className="btn-orange" onClick={createRoom} disabled={loading}>{loading ? 'Erstelle...' : 'Neues Spiel erstellen'}</button>
+            <button className="btn-orange" onClick={joinMain} disabled={joining}>{joining ? 'Beitreten...' : 'Spiel suchen & beitreten'}</button>
+            <button className="btn-orange" onClick={joinMain} disabled={joining}>{joining ? 'Erstelle...' : 'Neues Spiel erstellen'}</button>
           </div>
         </section>
       </div>
     )
   }
 
-  // Room view (paramRoomId present)
+  // Room view (roomId from URL)
   return (
     <div className="container">
       <header style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -282,8 +246,8 @@ export default function ImposterGame(){
           <div>
             <p>Kein Raum geladen.</p>
             <div style={{display:'flex',gap:8}}>
-              <input value={roomId} onChange={e=>setRoomId(e.target.value)} placeholder="Raum ID" />
-              <button className="btn-orange" onClick={()=>joinRoom(roomId)} disabled={joining}>{joining ? 'Beitreten...' : 'Join'}</button>
+              <input value={manualRoomId || roomId || ''} onChange={e=>setManualRoomId(e.target.value)} placeholder="Raum ID" />
+              <button className="btn-orange" onClick={()=>joinRoom(manualRoomId || roomId)} disabled={joining}>{joining ? 'Beitreten...' : 'Join'}</button>
             </div>
           </div>
         )}

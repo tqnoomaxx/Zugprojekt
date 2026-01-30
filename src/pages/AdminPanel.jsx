@@ -19,7 +19,10 @@ export default function AdminPanel(){
   // Raumlisten
   const [imposterRooms, setImposterRooms] = useState([])
   const [bingoRooms, setBingoRooms] = useState([])
+  const [quizRooms, setQuizRooms] = useState([])
   const [openRoom, setOpenRoom] = useState(null)
+
+  const ROOM_COLLECTIONS = { imposter: 'imposterRooms', bingo: 'bingoRooms', quiz: 'quizRooms' }
 
   useEffect(() => {
     if (!db) return
@@ -29,10 +32,13 @@ export default function AdminPanel(){
     const unsub2 = onSnapshot(collection(db, 'bingoRooms'), snap => {
       setBingoRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     })
-    const unsub3 = onSnapshot(collection(db, 'wordSets'), snap => {
+    const unsub3 = onSnapshot(collection(db, 'quizRooms'), snap => {
+      setQuizRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    })
+    const unsub4 = onSnapshot(collection(db, 'wordSets'), snap => {
       setWordSets(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     })
-    return () => { unsub1(); unsub2(); unsub3(); }
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); }
   }, [db])
 
   const startEdit = (set) => {
@@ -54,7 +60,8 @@ export default function AdminPanel(){
   }
   const deleteRoom = async (game, id) => {
     if (!db || !id) return
-    await deleteDoc(doc(db, game === 'imposter' ? 'imposterRooms' : 'bingoRooms', id))
+    const coll = ROOM_COLLECTIONS[game] || 'rooms'
+    await deleteDoc(doc(db, coll, id))
     setStatus(`Raum ${id} gelöscht`)
   }
   const saveSet = async (e) => {
@@ -91,7 +98,7 @@ export default function AdminPanel(){
     <div className="container">
       <h2>Admin Panel</h2>
       <div style={{marginBottom:8, fontSize:13}} className="muted">
-        DB: {db ? 'connected' : 'no db'} — wordSets: {wordSets.length} — Imposter-Räume: {imposterRooms.length} — Bingo-Räume: {bingoRooms.length}
+        DB: {db ? 'connected' : 'no db'} — wordSets: {wordSets.length} — Imposter: {imposterRooms.length} — Bingo: {bingoRooms.length} — Quiz: {quizRooms.length}
       </div>
       <div className="admin-flex" style={{display:'flex',gap:32,flexWrap:'wrap'}}>
         {/* Imposter Karten-Sets */}
@@ -164,7 +171,7 @@ export default function AdminPanel(){
               </div>
             ))}
           </div>
-          <div className="card">
+          <div className="card" style={{marginBottom:16}}>
             <b>Bingo-Räume</b>
             {bingoRooms.length === 0 && <div className="muted">Keine Bingo-Räume vorhanden.</div>}
             {bingoRooms
@@ -180,6 +187,31 @@ export default function AdminPanel(){
                   </div>
                 </div>
                 {openRoom===`bingo-${room.id}` && (
+                  <div style={{margin:'8px 0 0 0',fontSize:13}}>
+                    <div><b>Status:</b> {room.status||'-'}</div>
+                    <div><b>Spieler:</b> {Array.isArray(room.players)?room.players.map(p=>p.name||p.id).join(', '):'-'}</div>
+                    <div><b>Host:</b> {room.host||'-'}</div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="card">
+            <b>Quiz-Räume</b>
+            {quizRooms.length === 0 && <div className="muted">Keine Quiz-Räume vorhanden.</div>}
+            {quizRooms
+              .slice()
+              .sort((a, b) => (a.id > b.id ? 1 : -1))
+              .map(room => (
+              <div key={room.id} style={{borderBottom:'1px solid #222',padding:'6px 0'}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <span style={{fontWeight:600}}>{room.id}</span>
+                  <div style={{display:'flex',gap:8}}>
+                    <button className="btn" style={{background:'#222',color:'#ffb470'}} onClick={()=>setOpenRoom(openRoom===`quiz-${room.id}`?null:`quiz-${room.id}`)} type="button">{openRoom===`quiz-${room.id}`?'Schließen':'Details'}</button>
+                    <button className="btn" style={{background:'#222',color:'#ff6a00'}} onClick={()=>deleteRoom('quiz', room.id)} type="button">Löschen</button>
+                  </div>
+                </div>
+                {openRoom===`quiz-${room.id}` && (
                   <div style={{margin:'8px 0 0 0',fontSize:13}}>
                     <div><b>Status:</b> {room.status||'-'}</div>
                     <div><b>Spieler:</b> {Array.isArray(room.players)?room.players.map(p=>p.name||p.id).join(', '):'-'}</div>

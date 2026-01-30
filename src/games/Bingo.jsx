@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useFirebase } from '../firebaseContext'
-import { collection, query, where, getDocs, addDoc, doc, setDoc, runTransaction, onSnapshot } from 'firebase/firestore'
+import { doc, runTransaction } from 'firebase/firestore'
+import { useGameRoom } from '../hooks/useGameRoom'
 import LoadingScreen from '../components/LoadingScreen'
 import LobbyView from '../components/LobbyView'
 import BingoCard from './BingoCard'
-import { useParams, useNavigate } from 'react-router-dom'
 
 // Bingo helpers
 const MAX_NUMBER = 75
@@ -47,96 +47,26 @@ function checkBingo(card, drawn){
   return false
 }
 
+const BINGO_COLLECTION = 'bingoRooms'
+
 export default function Bingo(){
-  const { db, uid, username } = useFirebase()
-  const userId = uid
-  // Immer nur ein Raum mit fixer ID 'main' in bingoRooms
-  const [roomId] = useState('main')
-  const [room, setRoom] = useState(null)
-  const [loading, setLoading] = useState(false)
-
-  // subscribe to wordSets-like — not needed
-
-  useEffect(() => {
-    if (!roomId) return
-    setLoading(true)
-    const ref = doc(db, 'bingoRooms', roomId)
-    const unsub = onSnapshot(ref, (snap) => {
-      setRoom(snap.exists() ? { id: snap.id, ...snap.data() } : null)
-      setLoading(false)
-    }, (err) => { console.error('bingo room onSnapshot', err); setLoading(false) })
-    return unsub
-  }, [db, roomId])
-
-  const searchAndJoin = useCallback(async () => {
-    if (!db || !userId) return
-    setLoading(true)
-    try {
-      const q = query(collection(db, 'rooms'), where('game','==','bingo'), where('status','==','waiting'))
-      const snap = await getDocs(q)
-      if (!snap.empty) {
-        const id = snap.docs[0].id
-        const ref = doc(db, 'rooms', id)
-        await runTransaction(db, async (tx) => {
-          const r = await tx.get(ref)
-          if (!r.exists()) throw new Error('Room disappeared')
-          const data = r.data() || {}
-          const players = Array.isArray(data.players) ? [...data.players] : []
-          if (!players.find(p=>p.id===userId)) players.push({ id: userId, name: username ?? userId })
-          tx.update(ref, { players, status: data.status ?? 'waiting' })
-        })
-        setRoomId(id); navigate(`/bingo/${id}`)
-      } else {
-        setRoomId('')
-      }
-    } catch (e) { console.error(e) }
-    finally { setLoading(false) }
-  }, [db, userId, username, navigate])
-
-  const createRoom = useCallback(async () => {
-    if (!db || !userId) return
-    setLoading(true)
-    try {
-      const ref = await addDoc(collection(db, 'rooms'), {
-        host: userId,
-        players: [{ id: userId, name: username ?? userId }],
-        game: 'bingo',
-        status: 'waiting',
-        createdAt: Date.now()
-      })
-      const id = ref.id
-      setRoomId(id)
-      navigate(`/bingo/${id}`)
-    } catch (e) { console.error(e) }
-    finally { setLoading(false) }
-  }, [db, userId, username, navigate])
-
-  const joinRoom = useCallback(async (id) => {
-    if (!db || !userId || !id) return
-    setJoining(true)
-    try {
-      const ref = doc(db, 'rooms', id)
-      await runTransaction(db, async (tx) => {
-        const r = await tx.get(ref)
-        if (!r.exists()) {
-          tx.set(ref, { players: [{ id: userId, name: username ?? userId }], host: userId, game:'bingo', status:'waiting', createdAt: Date.now() })
-          return
-        }
-        const data = r.data() || {}
-        const players = Array.isArray(data.players) ? [...data.players] : []
-        if (!players.find(p=>p.id===userId)) players.push({ id: userId, name: username ?? userId })
-        const updates = { players, status: data.status ?? 'waiting' }
-        if (!data.host) updates.host = userId
-        tx.update(ref, updates)
-      })
-      setRoomId(id); navigate(`/bingo/${id}`)
-    } catch (e) { console.error('joinRoom error', e) }
-    finally { setJoining(false) }
-  }, [db, userId, username, navigate])
+  const { db } = useFirebase()
+  const {
+    roomId,
+    room,
+    loading,
+    joining,
+    joinRoom,
+    createRoom,
+    searchAndJoin,
+    userId,
+    username,
+  } = useGameRoom(BINGO_COLLECTION, '/bingo')
+  const [manualRoomId, setManualRoomId] = useState('')
 
   const startGame = useCallback(async () => {
     if (!db || !roomId || !room) return
-    const ref = doc(db, 'rooms', roomId)
+    const ref = doc(db, BINGO_COLLECTION, roomId)
     try {
       await runTransaction(db, async (tx) => {
         const r = await tx.get(ref)
@@ -154,7 +84,7 @@ export default function Bingo(){
 
   const drawNumber = useCallback(async () => {
     if (!db || !roomId) return
-    const ref = doc(db, 'rooms', roomId)
+    const ref = doc(db, BINGO_COLLECTION, roomId)
     try {
       await runTransaction(db, async (tx) => {
         const r = await tx.get(ref)
@@ -174,7 +104,7 @@ export default function Bingo(){
 
   const claimBingo = useCallback(async () => {
     if (!db || !roomId || !room) return
-    const ref = doc(db, 'rooms', roomId)
+    const ref = doc(db, BINGO_COLLECTION, roomId)
     try {
       await runTransaction(db, async (tx) => {
         const r = await tx.get(ref)
@@ -197,7 +127,7 @@ export default function Bingo(){
 
   if (!userId) return <LoadingScreen />
 
-  if (!paramRoomId) {
+  if (!roomId) {
     return (
       <div className="container">
         <header style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -229,8 +159,8 @@ export default function Bingo(){
           <div>
             <p>Kein Raum geladen.</p>
             <div style={{display:'flex',gap:8}}>
-              <input value={roomId} onChange={e=>setRoomId(e.target.value)} placeholder="Raum ID" />
-              <button className="btn-orange" onClick={()=>joinRoom(roomId)} disabled={joining}>{joining ? 'Beitreten...' : 'Join'}</button>
+              <input value={manualRoomId || roomId || ''} onChange={e=>setManualRoomId(e.target.value)} placeholder="Raum ID" />
+              <button className="btn-orange" onClick={()=>joinRoom(manualRoomId || roomId)} disabled={joining}>{joining ? 'Beitreten...' : 'Join'}</button>
             </div>
           </div>
         )}
